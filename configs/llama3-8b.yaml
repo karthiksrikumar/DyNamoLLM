@@ -1,0 +1,27 @@
+# configs/llama3-8b.yaml
+_base_: "base.yaml"  # Inherits all parameters from base.yaml
+
+# Model specifications
+model_name: "meta-llama/Meta-Llama-3-8B"
+model_revision: "main"
+max_length: 2048
+
+# DYNAMO adapter configuration
+dynamo:
+  time2vec:
+    frequency_bands: 64  # Number of frequency bands in Time2Vec
+    learn_frequencies: true
+  causal_gnn:
+    gnn_type: "gcn"
+    num_layers: 2
+    dropout: 0.1
+    normalization: "layer_norm"
+  regularization:
+    js_margin: 0.5      # Margin for JS contrastive loss
+    temperature: 0.07   # Temperature parameter
+
+
+# Training overrides (specific to LLaMA-3-8B)
+learning_rate: 2e-5
+batch_size: 16          # Reduced due to larger model size
+gradient_checkpointing: true
