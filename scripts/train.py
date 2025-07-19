@@ -3,36 +3,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.nn.parallel import DistributedDataParallel as DDP
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaConfig, LlamaTokenizer
 from datasets import load_dataset
-
-# Placeholder classes (replace with actual implementations)
-class Time2Vec(nn.Module):
-    def __init__(self, m): pass
-    def forward(self, t): pass
-
-class CausalGNN(nn.Module):
-    def __init__(self, num_nodes, hidden_dim, output_dim): pass
-    def forward(self, x): pass
-
-class Dynamo(nn.Module):
-    def __init__(self, llama_model, time2vec, causal_gnn, adapter_size): 
-        super().__init__()
-        self.llama_model = llama_model
-        self.time2vec = time2vec
-        self.causal_gnn = causal_gnn
-        self.adapters = nn.Linear(adapter_size, adapter_size)  # Simplified adapter
-    def forward(self, input_ids, attention_mask, t): 
-        # Placeholder forward pass
-        outputs = self.llama_model(input_ids=input_ids, attention_mask=attention_mask)
-        return outputs
-
-def contrastive_loss(h_i, h_j, tau): 
-    # Placeholder for contrastive loss
-    return torch.tensor(0.0)
+from dynamo import Dynamo  # Import from dynamo.py
+from time2vec import Time2Vec
+from causal_gnn import CausalGNN
+from regularization import contrastive_loss
 
 def train(rank, world_size, config):
-    """Main training function supporting multi-GPU setups."""
+    """Main training function for DYNAMO on TimeBench, supporting multi-GPU."""
     # Initialize distributed training if multi-GPU
     if world_size > 1:
         torch.distributed.init_process_group(
@@ -42,26 +21,40 @@ def train(rank, world_size, config):
     else:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # Load base LLaMA model and tokenizer
-    llama_model = LlamaForCausalLM.from_pretrained("meta-ai/llama-7b")
+    # Load tokenizer
     tokenizer = LlamaTokenizer.from_pretrained("meta-ai/llama-7b")
 
-    # Initialize DYNAMO components
+    # Initialize DYNAMO model
+    llama_config = LlamaConfig(
+        hidden_size=4096,
+        num_hidden_layers=32,
+        num_attention_heads=32,
+        intermediate_size=11008,
+        max_position_embeddings=2048,
+    )
     time2vec = Time2Vec(m=config['m'])
     causal_gnn = CausalGNN(num_nodes=config['num_nodes'], hidden_dim=config['hidden_dim'], output_dim=config['output_dim'])
-    model = Dynamo(llama_model, time2vec, causal_gnn, adapter_size=config['adapter_size'])
-
-    # Move model to device
+    model = Dynamo(llama_config, adapter_size=config['adapter_size'], dim_time=config['dim_time'])
     model.to(device)
     if world_size > 1:
         model = DDP(model, device_ids=[rank])
 
-    # Load dataset (assumes a temporal dataset with text and timestamps)
-    dataset = load_dataset(config['dataset_name'])
-    train_loader = DataLoader(dataset['train'], batch_size=config['batch_size'], shuffle=True)
+    # Load TimeBench dataset and create temporal splits
+    dataset = load_dataset("timebench")  # Replace with actual dataset path
+    temporal_splits = {
+        "t0": dataset['train'].filter(lambda x: x["timestamp"] < "2022-01-01"),
+        "t1": dataset['train'].filter(lambda x: "2022-01-01" <= x["timestamp"] < "2023-01-01"),
+        "t2": dataset['train'].filter(lambda x: x["timestamp"] >= "2023-01-01")
+    }
+    train_loader = DataLoader(temporal_splits['t0'], batch_size=config['batch_size'], shuffle=True)
 
-    # Optimizer (only for adapter parameters)
-    optimizer = torch.optim.AdamW(model.adapters.parameters(), lr=config['lr'])
+    # Optimizer for adapters and Time2Vec parameters
+    trainable_params = (
+        list(model.model.time2vec.parameters()) +
+        [p for layer in model.model.layers for p in layer.adapter_attn.parameters()] +
+        [p for layer in model.model.layers for p in layer.adapter_ff.parameters()]
+    )
+    optimizer = torch.optim.AdamW(trainable_params, lr=config['lr'])
 
     # Training loop
     os.makedirs("checkpoints", exist_ok=True)
@@ -70,13 +63,13 @@ def train(rank, world_size, config):
         total_loss = 0
         for batch in train_loader:
             inputs = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True).to(device)
-            t = batch['timestamp'].to(device)  # Assuming dataset has timestamps
+            t = torch.tensor([float(batch['timestamp'][0].split('-')[0])]).to(device)  # Year as float
             outputs = model(**inputs, t=t)
             loss = outputs.loss
 
-            # Add causal invariance regularization (contrastive loss)
+            # Add causal invariance regularization
             if config['use_contrastive']:
-                h_i = outputs.logits  # Representation for contrastive loss
+                h_i = outputs.logits  # Use logits as representations
                 h_j = h_i  # Placeholder: sample from another time point
                 contrastive_reg = contrastive_loss(h_i, h_j, tau=config['tau'])
                 loss += config['lambda_contrastive'] * contrastive_reg
@@ -89,20 +82,20 @@ def train(rank, world_size, config):
         if rank == 0:
             avg_loss = total_loss / len(train_loader)
             print(f"Epoch {epoch}, Average Loss: {avg_loss:.4f}")
-            torch.save(model.state_dict(), f"checkpoints/model_epoch_{epoch}.pt")
+            torch.save(model.state_dict(), f"checkpoints/dynamo_epoch_{epoch}.pt")
 
     if world_size > 1:
         torch.distributed.destroy_process_group()
 
 if __name__ == "__main__":
-    # Example configuration
     config = {
-        'm': 10,
+        'm': 10,  # Number of frequencies for Time2Vec
         'num_nodes': 50,
         'hidden_dim': 128,
         'output_dim': 64,
         'adapter_size': 64,
-        'dataset_name': 'path_to_dataset',
+        'dim_time': 64,
+        'dataset_name': 'timebench',
         'batch_size': 16,
         'epochs': 10,
         'lr': 1e-4,
