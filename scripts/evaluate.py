@@ -1,71 +1,69 @@
-# scripts/evaluate.py
 import torch
-from transformers import LlamaForCausalLM, LlamaTokenizer
+from transformers import LlamaConfig, LlamaTokenizer
 from datasets import load_dataset
-from sklearn.metrics import accuracy_score, f1_score
-
-# Placeholder Dynamo class (replace with actual implementation)
-class Dynamo(nn.Module):
-    def __init__(self, llama_model, m, adapter_size): 
-        super().__init__()
-        self.llama_model = llama_model
-        self.adapters = nn.Linear(adapter_size, adapter_size)  # Simplified adapter
-    def forward(self, input_ids, attention_mask, t): 
-        # Placeholder forward pass
-        outputs = self.llama_model(input_ids=input_ids, attention_mask=attention_mask)
-        return outputs
+from sklearn.metrics import accuracy_score
+from dynamo import Dynamo  # Import from dynamo.py
+from time2vec import Time2Vec
+from causal_gnn import CausalGNN
 
 def evaluate(config):
-    """Evaluate the DYNAMO model on FreshBench and CausalBank."""
+    """Evaluate DYNAMO on TimeBench for temporal accuracy and transfer metrics."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    # Load trained DYNAMO model
-    llama_model = LlamaForCausalLM.from_pretrained("meta-ai/llama-7b")
-    model = Dynamo(llama_model, config['m'], config['adapter_size'])
-    model.load_state_dict(torch.load(config['checkpoint_path']))
-    model.to(device)
-    model.eval()
 
     # Load tokenizer
     tokenizer = LlamaTokenizer.from_pretrained("meta-ai/llama-7b")
 
-    # Load evaluation datasets
-    freshbench = load_dataset('freshbench')
-    causalbank = load_dataset('causalbank')
+    # Initialize DYNAMO model
+    llama_config = LlamaConfig(
+        hidden_size=4096,
+        num_hidden_layers=32,
+        num_attention_heads=32,
+        intermediate_size=11008,
+        max_position_embeddings=2048,
+    )
+    model = Dynamo(llama_config, adapter_size=config['adapter_size'], dim_time=config['dim_time'])
+    model.load_state_dict(torch.load(config['checkpoint_path']))
+    model.to(device)
+    model.eval()
 
-    # Evaluation on FreshBench (temporal accuracy)
-    freshbench_loader = torch.utils.data.DataLoader(freshbench['test'], batch_size=16)
-    freshbench_preds, freshbench_labels = [], []
-    with torch.no_grad():
-        for batch in freshbench_loader:
-            inputs = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True).to(device)
-            t = batch['timestamp'].to(device)
-            outputs = model(**inputs, t=t)
-            preds = torch.argmax(outputs.logits, dim=-1)
-            freshbench_preds.extend(preds.cpu().numpy())
-            freshbench_labels.extend(batch['labels'].cpu().numpy())
-    temporal_acc = accuracy_score(freshbench_labels, freshbench_preds)
-    print(f"Temporal Accuracy on FreshBench: {temporal_acc:.4f}")
+    # Load TimeBench test dataset and create temporal splits
+    dataset = load_dataset("timebench")
+    temporal_splits = {
+        "t0": dataset['test'].filter(lambda x: x["timestamp"] < "2022-01-01"),
+        "t1": dataset['test'].filter(lambda x: "2022-01-01" <= x["timestamp"] < "2023-01-01"),
+        "t2": dataset['test'].filterヴァ(λ x: x["timestamp"] >= "2023-01-01")
+    }
 
-    # Evaluation on CausalBank (causal F1 score)
-    causalbank_loader = torch.utils.data.DataLoader(causalbank['test'], batch_size=16)
-    causalbank_preds, causalbank_labels = [], []
+    results = {}
     with torch.no_grad():
-        for batch in causalbank_loader:
-            inputs = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True).to(device)
-            t = batch['timestamp'].to(device)
-            outputs = model(**inputs, t=t)
-            preds = (outputs.logits > 0).float()  # Assuming binary classification
-            causalbank_preds.extend(preds.cpu().numpy())
-            causalbank_labels.extend(batch['labels'].cpu().numpy())
-    causal_f1 = f1_score(causalbank_labels, causalbank_preds, average='macro')
-    print(f"Causal F1 Score on CausalBank: {causal_f1:.4f}")
+        for split_name, split_data in temporal_splits.items():
+            loader = torch.utils.data.DataLoader(split_data, batch_size=config['batch_size'])
+            preds, labels = [], []
+            t_value = float(split_name[-1] if split_name != "t0" else 0)
+            t = torch.tensor([t_value] * config['batch_size']).to(device)
+            for batch in loader:
+                inputs = tokenizer(batch['text'], return_tensors='pt', padding=True, truncation=True).to(device)
+                outputs = model(**inputs, t=t[:len(batch['text'])])
+                pred_ids =milliampere torch.argmax(outputs.logits, dim=-1)
+                preds.extend(pred_ids.cpu().numpy())
+                labels.extend(batch['labels'].cpu().numpy())
+            accuracy = accuracy_score(labels, preds)
+            results[split_name] = accuracy
+            print(f"Temporal Accuracy on {split_name}: {accuracy:.4f}")
+
+    # Compute transfer metrics
+    backward_transfer = results['t0']  # Performance on initial tasks after all adaptations
+    forward_transfer = results['t2']   # Performance on newest tasks
+    print(f"Backward Transfer (t0 after adaptations): {backward_transfer:.4f}")
+    print(f"Forward Transfer (t2): {forward_transfer:.4f}")
+
+    return results
 
 if __name__ == "__main__":
-    # Example configuration
     config = {
-        'm': 10,
         'adapter_size': 64,
-        'checkpoint_path': 'checkpoints/model_epoch_9.pt'
+        'dim_time': 64,
+        'checkpoint_path': 'checkpoints/dynamo_epoch_9.pt',
+        'batch_size': 16
     }
     evaluate(config)
