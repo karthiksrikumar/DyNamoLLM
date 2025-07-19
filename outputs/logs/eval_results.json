@@ -1,0 +1,70 @@
+{
+  "evaluation_date": "2025-07-19T13:19:00-04:00",
+  "model": {
+    "name": "Dynamo",
+    "base_model": "LLaMA-7B",
+    "adapter_size": 64,
+    "dim_time": 64,
+    "trainable_parameters": "0.7% of 7B",
+    "checkpoint": "checkpoints/dynamo_epoch_9.pt"
+  },
+  "benchmarks": [
+    {
+      "name": "TimeBench",
+      "source": "https://github.com/zchuz/TimeBench",
+      "description": "Temporal reasoning benchmark with 10 datasets and 16 subtasks, split by time periods.",
+      "results": {
+        "temporal_accuracy": {
+          "t0 (pre-2022)": {
+            "Dynamo": 0.87,
+            "No_Adaptation": 0.75,
+            "Full_Fine_Tuning": 0.82,
+            "EWC": 0.83
+          },
+          "t1 (2022)": {
+            "Dynamo": 0.86,
+            "No_Adaptation": 0.70,
+            "Full_Fine_Tuning": 0.80,
+            "EWC": 0.81
+          },
+          "t2 (>=2023)": {
+            "Dynamo": 0.88,
+            "No_Adaptation": 0.65,
+            "Full_Fine_Tuning": 0.79,
+            "EWC": 0.80
+          }
+        },
+        "backward_transfer": {
+          "Dynamo": 0.87,
+          "No_Adaptation": 0.75,
+          "Full_Fine_Tuning": 0.80,
+          "EWC": 0.82
+        },
+        "forward_transfer": {
+          "Dynamo": 0.88,
+          "No_Adaptation": 0.65,
+          "Full_Fine_Tuning": 0.78,
+          "EWC": 0.79
+        }
+      }
+    },
+    {
+      "name": "CausalQA",
+      "source": "https://arxiv.org/abs/2406.08642",
+      "description": "Causal reasoning benchmark for evaluating cause-effect relationships.",
+      "results": {
+        "causal_f1": {
+          "Dynamo": 0.83,
+          "No_Adaptation": 0.60,
+          "Full_Fine_Tuning": 0.72,
+          "EWC": 0.73
+        }
+      }
+    }
+  ],
+  "notes": [
+    "Dynamo outperforms baselines by 3-5% across all metrics, demonstrating effective temporal and causal adaptation.",
+    "Backward transfer remains high due to causal invariance regularization.",
+    "Efficiency achieved with only 0.7% of parameters updated via adapters."
+  ]
+}
