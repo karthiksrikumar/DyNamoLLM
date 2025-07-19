@@ -1,6 +1,6 @@
 # scripts/evaluate.py
 # Links:
-# - TimeBench: https://github.com/zchuz/TimeBench (primary temporal reasoning benchmark)
+# - TimeBench: https://github.com/zchuz/TimeBench (primary temporal reasoning  benchmark)
 # - CausalQA: https://arxiv.org/abs/2406.08642 (causal reasoning benchmark)
 
 import json
