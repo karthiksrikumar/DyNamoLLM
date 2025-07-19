@@ -1,0 +1,32 @@
+# configs/base.yaml
+seed: 42  # For reproducibility
+log_dir: "logs/"
+output_dir: "outputs/"
+
+# Training parameters
+learning_rate: 1e-4
+weight_decay: 0.01
+batch_size: 32
+gradient_accumulation_steps: 4
+max_epochs: 5
+warmup_ratio: 0.1
+
+# Adapter architecture
+adapter_type: "dynamo"
+d_time: 64      # Time2Vec dimension
+d_causal: 128   # Causal GNN dimension
+bottleneck_dim: 256  # Adapter bottleneck dimension
+activation: "gelu"
+
+# Regularization
+lambda_js: 0.3  # Weight for D_JS regularization
+gamma: 0.1       # Weight for temporal smoothness
+
+# Optimization
+optimizer: "adamw"
+scheduler: "linear"
+fp16: true       # Mixed precision training
+
+# Evaluation
+eval_steps: 500
+save_steps: 1000
